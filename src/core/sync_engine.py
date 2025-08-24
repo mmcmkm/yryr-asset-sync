@@ -9,7 +9,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
-from config.models import FolderPair, SyncResult, FilterRule
+from config.models import FolderPair, SyncResult, FilterRule, FileRenameRule
 from utils.logger import get_logger
 from utils.file_utils import (
     get_file_info, is_file_newer, copy_file_with_metadata,
@@ -131,11 +131,11 @@ class SyncEngine:
             # ファイル同期実行
             if options.max_workers > 1:
                 result = self._sync_files_parallel(
-                    sync_files, source_path, target_path, options, callback
+                    sync_files, source_path, target_path, options, callback, folder_pair
                 )
             else:
                 result = self._sync_files_sequential(
-                    sync_files, source_path, target_path, options, callback
+                    sync_files, source_path, target_path, options, callback, folder_pair
                 )
             
             result.duration_seconds = time.time() - start_time
@@ -174,7 +174,8 @@ class SyncEngine:
         source_base: Path,
         target_base: Path,
         options: SyncOptions,
-        callback: SyncProgressCallback
+        callback: SyncProgressCallback,
+        folder_pair: FolderPair = None
     ) -> SyncResult:
         """ファイルを順次同期"""
         result = SyncResult(success=True)
@@ -187,6 +188,12 @@ class SyncEngine:
                 # 相対パスを計算
                 rel_path = source_file.relative_to(source_base)
                 target_file = target_base / rel_path
+                
+                # リネームルールがある場合は適用
+                if folder_pair and folder_pair.file_rename_rules:
+                    target_file = self._apply_rename_rules(
+                        source_file, target_file, folder_pair.file_rename_rules
+                    )
                 
                 callback.on_file_progress(i + 1, len(files), str(rel_path), "処理中")
                 
@@ -215,7 +222,8 @@ class SyncEngine:
         source_base: Path,
         target_base: Path,
         options: SyncOptions,
-        callback: SyncProgressCallback
+        callback: SyncProgressCallback,
+        folder_pair: FolderPair = None
     ) -> SyncResult:
         """ファイルを並行同期"""
         result = SyncResult(success=True)
@@ -230,6 +238,12 @@ class SyncEngine:
                 
                 rel_path = source_file.relative_to(source_base)
                 target_file = target_base / rel_path
+                
+                # リネームルールがある場合は適用
+                if folder_pair and folder_pair.file_rename_rules:
+                    target_file = self._apply_rename_rules(
+                        source_file, target_file, folder_pair.file_rename_rules
+                    )
                 
                 future = executor.submit(self._sync_single_file, source_file, target_file, options)
                 future_to_file[future] = (source_file, rel_path)
@@ -262,6 +276,39 @@ class SyncEngine:
                     callback.on_file_progress(completed_count, len(files), str(rel_path), "エラー")
         
         return result
+    
+    def _apply_rename_rules(
+        self, 
+        source_file: Path, 
+        target_file: Path, 
+        rename_rules: List[FileRenameRule]
+    ) -> Path:
+        """
+        リネームルールを適用してターゲットファイルパスを更新
+        
+        Args:
+            source_file: ソースファイルパス
+            target_file: 元のターゲットファイルパス
+            rename_rules: リネームルールリスト
+        
+        Returns:
+            更新されたターゲットファイルパス
+        """
+        source_filename = source_file.name
+        
+        for rule in rename_rules:
+            if not rule.enabled:
+                continue
+            
+            # 完全一致でファイル名をチェック
+            if source_filename == rule.source_filename:
+                # ターゲットファイル名を変更
+                new_target = target_file.parent / rule.target_filename
+                self.logger.debug(f"リネームルール適用: {source_filename} -> {rule.target_filename}")
+                return new_target
+        
+        # マッチするルールがない場合は元のパスを返す
+        return target_file
     
     def _sync_single_file(self, source_file: Path, target_file: Path, options: SyncOptions) -> str:
         """

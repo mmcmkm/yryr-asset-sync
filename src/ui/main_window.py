@@ -610,6 +610,11 @@ class MainWindow(QMainWindow):
                 folder_pair.file_mapping_rules = folder_data['mapping_rules']
                 self.project_manager.save_current_project()
             
+            # リネームルールを設定
+            if folder_pair and 'rename_rules' in folder_data and folder_data['rename_rules']:
+                folder_pair.file_rename_rules = folder_data['rename_rules']
+                self.project_manager.save_current_project()
+            
             if folder_pair:
                 self.refresh_folder_pairs()
                 self.add_log_message(f"フォルダペアを追加しました: {folder_pair.name}")
@@ -1003,6 +1008,11 @@ class MainWindow(QMainWindow):
             # マッピングルールを設定
             if folder_pair and 'mapping_rules' in folder_data and folder_data['mapping_rules']:
                 folder_pair.file_mapping_rules = folder_data['mapping_rules']
+                self.project_manager.save_current_project()
+            
+            # リネームルールを設定
+            if folder_pair and 'rename_rules' in folder_data and folder_data['rename_rules']:
+                folder_pair.file_rename_rules = folder_data['rename_rules']
                 self.project_manager.save_current_project()
             
             if folder_pair:

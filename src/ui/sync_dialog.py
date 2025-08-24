@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 
-from config.models import FolderPair, FileMappingRule
+from config.models import FolderPair, FileMappingRule, FileRenameRule
 import uuid
 
 
@@ -59,6 +59,10 @@ class SyncDialog(QDialog):
         # ファイルマッピングタブ
         mapping_tab = self.create_mapping_tab()
         tab_widget.addTab(mapping_tab, "ファイル振り分け")
+        
+        # ファイルリネームタブ
+        rename_tab = self.create_rename_tab()
+        tab_widget.addTab(rename_tab, "ファイル名変更")
         
         layout.addWidget(tab_widget)
         
@@ -363,6 +367,81 @@ class SyncDialog(QDialog):
         
         return tab
     
+    def create_rename_tab(self) -> QWidget:
+        """ファイルリネームタブ作成"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        
+        # 説明
+        help_text = QLabel(
+            "個別のファイルごとに異なる名前に変更できます。\n"
+            "例：001.jpg → one.jpg、002.jpg → ああああ.jpg など\n"
+            "法則性のない自由な名前変更が可能です。"
+        )
+        help_text.setWordWrap(True)
+        help_text.setStyleSheet("color: #666666; font-size: 10px; margin-bottom: 10px;")
+        layout.addWidget(help_text)
+        
+        # リネーム有効化
+        self.rename_enabled_check = QCheckBox("ファイル名変更機能を有効にする")
+        layout.addWidget(self.rename_enabled_check)
+        
+        # リネームルールリスト
+        rename_group = QGroupBox("リネームルール")
+        rename_layout = QVBoxLayout(rename_group)
+        
+        # リネームルール操作ボタン
+        rename_btn_layout = QHBoxLayout()
+        self.rename_add_btn = QPushButton("ルール追加")
+        self.rename_edit_btn = QPushButton("ルール編集")
+        self.rename_remove_btn = QPushButton("ルール削除")
+        self.rename_batch_btn = QPushButton("一括追加")
+        
+        self.rename_add_btn.clicked.connect(self.add_rename_rule)
+        self.rename_edit_btn.clicked.connect(self.edit_rename_rule)
+        self.rename_remove_btn.clicked.connect(self.remove_rename_rule)
+        self.rename_batch_btn.clicked.connect(self.batch_add_rename_rules)
+        
+        rename_btn_layout.addWidget(self.rename_add_btn)
+        rename_btn_layout.addWidget(self.rename_edit_btn)
+        rename_btn_layout.addWidget(self.rename_remove_btn)
+        rename_btn_layout.addWidget(self.rename_batch_btn)
+        rename_btn_layout.addStretch()
+        
+        rename_layout.addLayout(rename_btn_layout)
+        
+        # リネームルールテーブル
+        from PySide6.QtWidgets import QTableWidget, QHeaderView
+        self.rename_table = QTableWidget()
+        self.rename_table.setColumnCount(4)
+        self.rename_table.setHorizontalHeaderLabels(["元のファイル名", "新しいファイル名", "説明", "有効"])
+        
+        # テーブルの列幅調整
+        header = self.rename_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        
+        rename_layout.addWidget(self.rename_table)
+        layout.addWidget(rename_group)
+        
+        # 使用例
+        example_group = QGroupBox("使用例")
+        example_layout = QVBoxLayout(example_group)
+        
+        example_text = QLabel(
+            "• 001.jpg → one.jpg\n"
+            "• 002.jpg → ああああ.jpg\n"
+            "• test_file.png → final_icon.png\n"
+            "• old_name.txt → 新しい名前.txt"
+        )
+        example_text.setStyleSheet("font-family: 'Consolas', monospace; font-size: 9px; color: #555555;")
+        example_layout.addWidget(example_text)
+        layout.addWidget(example_group)
+        
+        return tab
+    
     def load_folder_pair_data(self):
         """フォルダペアデータを読み込み"""
         if not self.folder_pair:
@@ -397,6 +476,11 @@ class SyncDialog(QDialog):
             self.mapping_enabled_check.setChecked(len(self.folder_pair.file_mapping_rules) > 0)
             self.load_mapping_rules()
         
+        # ファイルリネーム
+        if hasattr(self.folder_pair, 'file_rename_rules'):
+            self.rename_enabled_check.setChecked(len(self.folder_pair.file_rename_rules) > 0)
+            self.load_rename_rules()
+        
         # 情報表示
         if hasattr(self, 'id_label'):
             self.id_label.setText(self.folder_pair.id)
@@ -427,6 +511,7 @@ class SyncDialog(QDialog):
             'exclude_patterns': exclude_patterns,
             'filter_enabled': self.filter_enabled_check.isChecked(),
             'mapping_rules': self.get_mapping_rules() if self.mapping_enabled_check.isChecked() else [],
+            'rename_rules': self.get_rename_rules() if self.rename_enabled_check.isChecked() else [],
             'enabled': self.enabled_check.isChecked(),
             'auto_sync': self.auto_sync_check.isChecked(),
             'backup_enabled': self.backup_enabled_check.isChecked()
@@ -796,6 +881,250 @@ class SyncDialog(QDialog):
                     enabled=enabled_item.text() == "有効"
                 )
                 rules.append(rule)
+        
+        return rules
+    
+    def load_rename_rules(self):
+        """リネームルールをテーブルに読み込み"""
+        if not self.folder_pair or not hasattr(self.folder_pair, 'file_rename_rules'):
+            return
+        
+        self.rename_table.setRowCount(0)
+        for rule in self.folder_pair.file_rename_rules:
+            self.add_rename_rule_to_table(rule.source_filename, rule.target_filename, rule.description, rule.enabled)
+    
+    def add_rename_rule(self):
+        """リネームルール追加"""
+        dialog = RenameRuleDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            rule_data = dialog.get_rule_data()
+            self.add_rename_rule_to_table(
+                rule_data['source_filename'],
+                rule_data['target_filename'],
+                rule_data['description'],
+                rule_data['enabled']
+            )
+    
+    def edit_rename_rule(self):
+        """リネームルール編集"""
+        current_row = self.rename_table.currentRow()
+        if current_row < 0:
+            QMessageBox.warning(self, "選択エラー", "編集するルールを選択してください。")
+            return
+        
+        # 現在の値を取得
+        source_item = self.rename_table.item(current_row, 0)
+        target_item = self.rename_table.item(current_row, 1)
+        desc_item = self.rename_table.item(current_row, 2)
+        enabled_item = self.rename_table.item(current_row, 3)
+        
+        if not all([source_item, target_item, desc_item, enabled_item]):
+            return
+        
+        # 編集ダイアログ表示
+        dialog = RenameRuleDialog(
+            self,
+            source_filename=source_item.text(),
+            target_filename=target_item.text(),
+            description=desc_item.text(),
+            enabled=enabled_item.text() == "有効"
+        )
+        
+        if dialog.exec() == QDialog.Accepted:
+            rule_data = dialog.get_rule_data()
+            source_item.setText(rule_data['source_filename'])
+            target_item.setText(rule_data['target_filename'])
+            desc_item.setText(rule_data['description'])
+            enabled_item.setText("有効" if rule_data['enabled'] else "無効")
+    
+    def remove_rename_rule(self):
+        """リネームルール削除"""
+        current_row = self.rename_table.currentRow()
+        if current_row >= 0:
+            self.rename_table.removeRow(current_row)
+    
+    def batch_add_rename_rules(self):
+        """リネームルール一括追加"""
+        dialog = BatchRenameDialog(self)
+        if dialog.exec() == QDialog.Accepted:
+            rules = dialog.get_rules()
+            for rule in rules:
+                self.add_rename_rule_to_table(
+                    rule['source_filename'],
+                    rule['target_filename'],
+                    rule['description'],
+                    rule['enabled']
+                )
+    
+    def add_rename_rule_to_table(self, source: str, target: str, description: str, enabled: bool):
+        """リネームルールをテーブルに追加"""
+        from PySide6.QtWidgets import QTableWidgetItem
+        
+        row = self.rename_table.rowCount()
+        self.rename_table.insertRow(row)
+        
+        self.rename_table.setItem(row, 0, QTableWidgetItem(source))
+        self.rename_table.setItem(row, 1, QTableWidgetItem(target))
+        self.rename_table.setItem(row, 2, QTableWidgetItem(description))
+        self.rename_table.setItem(row, 3, QTableWidgetItem("有効" if enabled else "無効"))
+    
+    def get_rename_rules(self) -> List[FileRenameRule]:
+        """テーブルからリネームルールを取得"""
+        rules = []
+        for row in range(self.rename_table.rowCount()):
+            source_item = self.rename_table.item(row, 0)
+            target_item = self.rename_table.item(row, 1)
+            desc_item = self.rename_table.item(row, 2)
+            enabled_item = self.rename_table.item(row, 3)
+            
+            if source_item and target_item and desc_item and enabled_item:
+                rule = FileRenameRule(
+                    id=str(uuid.uuid4()),
+                    source_filename=source_item.text(),
+                    target_filename=target_item.text(),
+                    description=desc_item.text(),
+                    enabled=enabled_item.text() == "有効"
+                )
+                rules.append(rule)
+        
+        return rules
+    
+    def accept_dialog(self):
+        """OK ボタンクリック"""
+        if self.validate_input():
+            self.accept()
+
+
+class RenameRuleDialog(QDialog):
+    """リネームルール編集ダイアログ"""
+    
+    def __init__(self, parent=None, source_filename="", target_filename="", description="", enabled=True):
+        super().__init__(parent)
+        self.init_ui(source_filename, target_filename, description, enabled)
+    
+    def init_ui(self, source_filename, target_filename, description, enabled):
+        """UI初期化"""
+        self.setWindowTitle("リネームルール編集")
+        self.setModal(True)
+        self.setMinimumWidth(400)
+        
+        layout = QVBoxLayout(self)
+        
+        # フォームレイアウト
+        form_layout = QFormLayout()
+        
+        self.source_edit = QLineEdit(source_filename)
+        self.source_edit.setPlaceholderText("例: 001.jpg")
+        form_layout.addRow("元のファイル名:", self.source_edit)
+        
+        self.target_edit = QLineEdit(target_filename)
+        self.target_edit.setPlaceholderText("例: one.jpg")
+        form_layout.addRow("新しいファイル名:", self.target_edit)
+        
+        self.description_edit = QLineEdit(description)
+        self.description_edit.setPlaceholderText("ルールの説明（任意）")
+        form_layout.addRow("説明:", self.description_edit)
+        
+        self.enabled_check = QCheckBox("有効")
+        self.enabled_check.setChecked(enabled)
+        form_layout.addRow("", self.enabled_check)
+        
+        layout.addLayout(form_layout)
+        
+        # ボタン
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("キャンセル")
+        
+        ok_button.clicked.connect(self.accept)
+        cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        
+        layout.addLayout(button_layout)
+    
+    def get_rule_data(self) -> dict:
+        """ルールデータを取得"""
+        return {
+            'source_filename': self.source_edit.text().strip(),
+            'target_filename': self.target_edit.text().strip(),
+            'description': self.description_edit.text().strip(),
+            'enabled': self.enabled_check.isChecked()
+        }
+
+
+class BatchRenameDialog(QDialog):
+    """リネームルール一括追加ダイアログ"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+    
+    def init_ui(self):
+        """UI初期化"""
+        self.setWindowTitle("リネームルール一括追加")
+        self.setModal(True)
+        self.setMinimumSize(500, 400)
+        
+        layout = QVBoxLayout(self)
+        
+        # 説明
+        help_text = QLabel(
+            "複数のリネームルールを一度に追加できます。\n"
+            "形式: 元のファイル名 → 新しいファイル名\n"
+            "1行に1つのルールを記述してください。"
+        )
+        help_text.setWordWrap(True)
+        layout.addWidget(help_text)
+        
+        # テキストエディタ
+        self.text_edit = QTextEdit()
+        self.text_edit.setPlaceholderText(
+            "001.jpg → one.jpg\n"
+            "002.jpg → ああああ.jpg\n"
+            "test.png → final_icon.png"
+        )
+        layout.addWidget(self.text_edit)
+        
+        # ボタン
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        ok_button = QPushButton("追加")
+        cancel_button = QPushButton("キャンセル")
+        
+        ok_button.clicked.connect(self.accept)
+        cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        
+        layout.addLayout(button_layout)
+    
+    def get_rules(self) -> List[dict]:
+        """入力からルールリストを取得"""
+        rules = []
+        text = self.text_edit.toPlainText()
+        
+        for line in text.split('\n'):
+            line = line.strip()
+            if not line or '→' not in line:
+                continue
+            
+            parts = line.split('→')
+            if len(parts) == 2:
+                source = parts[0].strip()
+                target = parts[1].strip()
+                if source and target:
+                    rules.append({
+                        'source_filename': source,
+                        'target_filename': target,
+                        'description': '',
+                        'enabled': True
+                    })
         
         return rules
     

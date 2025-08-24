@@ -27,6 +27,16 @@ class FileMappingRule:
 
 
 @dataclass
+class FileRenameRule:
+    """ファイルリネームルール"""
+    id: str
+    source_filename: str  # 元のファイル名（完全一致）
+    target_filename: str  # 変更後のファイル名
+    description: str = ""  # 説明
+    enabled: bool = True
+
+
+@dataclass
 class FolderPair:
     """フォルダペア設定"""
     id: str
@@ -35,6 +45,7 @@ class FolderPair:
     target_path: str  # ターゲットフォルダパス
     filter_rule: FilterRule = field(default_factory=FilterRule)
     file_mapping_rules: List[FileMappingRule] = field(default_factory=list)  # ファイルマッピングルール
+    file_rename_rules: List[FileRenameRule] = field(default_factory=list)  # ファイルリネームルール
     auto_sync: bool = False  # 自動同期有効
     backup_enabled: bool = True  # バックアップ有効
     last_sync: Optional[str] = None  # 最後の同期日時

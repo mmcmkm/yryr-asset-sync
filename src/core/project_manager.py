@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from config.models import ProjectSettings, FolderPair, FilterRule, SyncResult, FileMappingRule
+from config.models import ProjectSettings, FolderPair, FilterRule, SyncResult, FileMappingRule, FileRenameRule
 from config.config_manager import ConfigManager
 from utils.logger import get_logger
 
