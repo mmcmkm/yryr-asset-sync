@@ -666,15 +666,35 @@ class MainWindow(QMainWindow):
             dialog = SyncDialog(self, folder_pair)
             if dialog.exec() == SyncDialog.Accepted:
                 folder_data = dialog.get_folder_data()
-                self.project_manager.update_folder_pair(
-                    folder_pair_id,
-                    name=folder_data['name'],
-                    source_path=folder_data['source_path'],
-                    target_path=folder_data['target_path']
-                )
-                # TODO: フィルタルール更新も実装
-                self.refresh_folder_pairs()
-                self.add_log_message(f"フォルダペアを更新しました: {folder_data['name']}")
+                
+                # フォルダペアのすべての設定を更新
+                folder_pair = self.project_manager.get_folder_pair(folder_pair_id)
+                if folder_pair:
+                    # 基本設定の更新
+                    folder_pair.name = folder_data['name']
+                    folder_pair.source_path = folder_data['source_path']
+                    folder_pair.target_path = folder_data['target_path']
+                    folder_pair.enabled = folder_data['enabled']
+                    folder_pair.auto_sync = folder_data['auto_sync']
+                    folder_pair.backup_enabled = folder_data['backup_enabled']
+                    
+                    # フィルター設定の更新
+                    folder_pair.filter_rule.enabled = folder_data['filter_enabled']
+                    folder_pair.filter_rule.include_patterns = folder_data['include_patterns']
+                    folder_pair.filter_rule.exclude_patterns = folder_data['exclude_patterns']
+                    
+                    # マッピングルールの更新
+                    if 'mapping_rules' in folder_data:
+                        folder_pair.file_mapping_rules = folder_data['mapping_rules']
+                    
+                    # リネームルールの更新
+                    if 'rename_rules' in folder_data:
+                        folder_pair.file_rename_rules = folder_data['rename_rules']
+                    
+                    # 設定を保存
+                    self.project_manager.save_current_project()
+                    self.refresh_folder_pairs()
+                    self.add_log_message(f"フォルダペアを更新しました: {folder_data['name']}")
     
     def remove_folder_pair(self):
         """フォルダペア削除"""
