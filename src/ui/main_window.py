@@ -55,6 +55,35 @@ class SyncThread(QThread):
             self.error.emit(f"同期エラー: {e}")
 
 
+class MultipleSyncThread(QThread):
+    """複数フォルダペア同期処理スレッド"""
+    
+    progress = Signal(int, int, str, str)  # current, total, file_path, status
+    finished = Signal(object)  # SyncResult
+    error = Signal(str)
+    
+    def __init__(self, sync_engine, folder_pairs, options):
+        super().__init__()
+        self.sync_engine = sync_engine
+        self.folder_pairs = folder_pairs
+        self.options = options
+    
+    def run(self):
+        """複数同期実行"""
+        try:
+            callback = SyncCallback()
+            callback.progress.connect(self.progress.emit)
+            callback.error.connect(self.error.emit)
+            
+            result = self.sync_engine.sync_multiple_folder_pairs(
+                self.folder_pairs, self.options, callback
+            )
+            self.finished.emit(result)
+            
+        except Exception as e:
+            self.error.emit(f"複数同期エラー: {e}")
+
+
 class SyncCallback(QObject, SyncProgressCallback):
     """同期進捗コールバック（Qt版）"""
     
@@ -182,7 +211,7 @@ class MainWindow(QMainWindow):
         self.add_folder_btn = QPushButton("追加")
         self.edit_folder_btn = QPushButton("編集")
         self.remove_folder_btn = QPushButton("削除")
-        self.sync_folder_btn = QPushButton("同期実行")
+        self.sync_folder_btn = QPushButton("選択同期")
         
         folder_btn_layout.addWidget(self.add_folder_btn)
         folder_btn_layout.addWidget(self.edit_folder_btn)
@@ -195,6 +224,7 @@ class MainWindow(QMainWindow):
         # フォルダペアツリー（ドラッグ&ドロップ対応）
         self.folder_tree = DragDropTreeWidget()
         self.folder_tree.setHeaderLabels(["名前", "ソース", "ターゲット", "状態"])
+        self.folder_tree.setSelectionMode(QTreeWidget.ExtendedSelection)  # 一般的な複数選択動作
         self.folder_tree.itemSelectionChanged.connect(self.on_folder_selection_changed)
         self.folder_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.folder_tree.customContextMenuRequested.connect(self.show_folder_context_menu)
@@ -477,9 +507,13 @@ class MainWindow(QMainWindow):
         """フォルダペア選択変更"""
         selected_items = self.folder_tree.selectedItems()
         has_selection = len(selected_items) > 0
+        single_selection = len(selected_items) == 1
         
-        self.edit_folder_btn.setEnabled(has_selection)
-        self.remove_folder_btn.setEnabled(has_selection)
+        # 編集・削除は単一選択のみ有効
+        self.edit_folder_btn.setEnabled(single_selection)
+        self.remove_folder_btn.setEnabled(single_selection)
+        
+        # 同期は選択があれば有効（複数選択対応）
         self.sync_folder_btn.setEnabled(has_selection)
     
     def on_file_changed(self, event: WatchEvent):
@@ -670,11 +704,21 @@ class MainWindow(QMainWindow):
             self.sync_all()
             return
         
-        folder_pair_id = selected_items[0].data(0, Qt.UserRole)
-        folder_pair = self.project_manager.get_folder_pair(folder_pair_id)
+        # 選択されたフォルダペアを取得
+        folder_pairs = []
+        for item in selected_items:
+            folder_pair_id = item.data(0, Qt.UserRole)
+            folder_pair = self.project_manager.get_folder_pair(folder_pair_id)
+            if folder_pair:
+                folder_pairs.append(folder_pair)
         
-        if folder_pair:
-            self.start_sync(folder_pair)
+        if folder_pairs:
+            if len(folder_pairs) == 1:
+                # 1つの場合は単一同期
+                self.start_sync(folder_pairs[0])
+            else:
+                # 複数の場合は複数同期
+                self.start_multiple_sync(folder_pairs)
     
     def sync_all(self):
         """全フォルダペアを同期"""
@@ -707,6 +751,27 @@ class MainWindow(QMainWindow):
         
         self.sync_thread.start()
         self.add_log_message(f"同期開始: {folder_pair.name}")
+    
+    def start_multiple_sync(self, folder_pairs):
+        """複数フォルダペアの同期開始"""
+        if self.sync_thread and self.sync_thread.isRunning():
+            QMessageBox.warning(self, "警告", "既に同期が実行中です。")
+            return
+        
+        options = self.get_sync_options()
+        
+        self.sync_thread = MultipleSyncThread(self.sync_engine, folder_pairs, options)
+        self.sync_thread.progress.connect(self.on_sync_progress)
+        self.sync_thread.finished.connect(self.on_sync_finished)
+        self.sync_thread.error.connect(self.on_sync_error)
+        
+        self.progress_bar.setValue(0)
+        folder_names = ", ".join([fp.name for fp in folder_pairs])
+        self.progress_label.setText(f"複数同期開始: {folder_names}")
+        self.sync_status_label.setText("同期: 実行中")
+        
+        self.sync_thread.start()
+        self.add_log_message(f"複数同期開始: {folder_names}")
     
     def start_file_watching(self):
         """ファイル監視開始"""

@@ -397,3 +397,103 @@ class SyncEngine:
             
         except Exception as e:
             return {"error": f"プレビュー取得エラー: {e}"}
+    
+    def sync_multiple_folder_pairs(
+        self,
+        folder_pairs: List[FolderPair],
+        options: SyncOptions = None,
+        callback: SyncProgressCallback = None
+    ) -> SyncResult:
+        """
+        複数フォルダペア同期を実行
+        
+        Args:
+            folder_pairs: フォルダペア設定リスト
+            options: 同期オプション
+            callback: 進捗コールバック
+        
+        Returns:
+            同期結果
+        """
+        if options is None:
+            options = SyncOptions()
+        
+        if callback is None:
+            callback = SyncProgressCallback()
+        
+        self._cancelled = False
+        start_time = time.time()
+        
+        self.logger.info(f"複数フォルダペア同期開始: {len(folder_pairs)}個")
+        
+        result = SyncResult(success=False)
+        total_files = 0
+        processed_files = 0
+        copied_files = 0
+        skipped_files = 0
+        error_files = 0
+        
+        try:
+            # 全フォルダペアのファイル数を事前計算
+            for folder_pair in folder_pairs:
+                if not folder_pair.enabled:
+                    continue
+                
+                source_path = Path(folder_pair.source_path)
+                if source_path.exists():
+                    sync_files = list(self._collect_sync_files(source_path, folder_pair.filter_rule))
+                    total_files += len(sync_files)
+            
+            if total_files == 0:
+                self.logger.warning("同期対象ファイルが見つかりませんでした")
+                result.success = True
+                result.duration_seconds = time.time() - start_time
+                callback.on_complete(result)
+                return result
+            
+            callback.on_start(total_files)
+            
+            # 各フォルダペアを順次処理
+            for folder_pair in folder_pairs:
+                if self._cancelled:
+                    break
+                
+                if not folder_pair.enabled:
+                    self.logger.info(f"スキップ（無効）: {folder_pair.name}")
+                    continue
+                
+                self.logger.info(f"フォルダペア処理開始: {folder_pair.name}")
+                
+                # 単一フォルダペア同期
+                single_result = self.sync_folder_pair(folder_pair, options, callback)
+                
+                if single_result.success:
+                    copied_files += len(single_result.copied_files)
+                    skipped_files += len(single_result.skipped_files)
+                    error_files += len(single_result.error_files)
+                else:
+                    error_files += 1
+                
+                processed_files += len(single_result.copied_files) + len(single_result.skipped_files) + len(single_result.error_files)
+            
+            result.success = not self._cancelled and error_files == 0
+            result.copied_files = [f"複数同期: {copied_files}ファイル"]
+            result.skipped_files = [f"複数同期: {skipped_files}ファイル"]
+            result.error_files = [f"複数同期: {error_files}ファイル"] if error_files > 0 else []
+            result.duration_seconds = time.time() - start_time
+            
+            if not self._cancelled:
+                self.logger.info(f"複数同期完了: コピー={copied_files}, スキップ={skipped_files}, エラー={error_files}")
+                callback.on_complete(result)
+            else:
+                self.logger.info("複数同期がキャンセルされました")
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"複数同期エラー: {e}"
+            self.logger.error(error_msg)
+            callback.on_error(error_msg)
+            result.success = False
+            result.duration_seconds = time.time() - start_time
+            return result
