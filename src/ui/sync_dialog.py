@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QTextEdit, QPushButton, QLabel, QCheckBox,
     QMessageBox, QGroupBox, QFileDialog, QListWidget,
-    QListWidgetItem, QTabWidget, QWidget, QSplitter
+    QListWidgetItem, QTabWidget, QWidget, QSplitter, QComboBox
 )
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -97,7 +97,12 @@ class SyncDialog(QDialog):
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("フォルダペアの名前を入力してください")
         basic_layout.addRow("名前(&N):", self.name_edit)
-        
+
+        # カテゴリ
+        self.category_combo = QComboBox()
+        self.category_combo.setEditable(True)
+        basic_layout.addRow("カテゴリ(&C):", self.category_combo)
+
         layout.addWidget(basic_group)
         
         # フォルダ設定
@@ -446,11 +451,15 @@ class SyncDialog(QDialog):
         """フォルダペアデータを読み込み"""
         if not self.folder_pair:
             return
-        
+
         # 基本情報
         self.name_edit.setText(self.folder_pair.name)
         self.source_path_edit.setText(self.folder_pair.source_path)
         self.target_path_edit.setText(self.folder_pair.target_path)
+
+        # カテゴリ設定
+        if hasattr(self.folder_pair, 'category'):
+            self.category_combo.setCurrentText(self.folder_pair.category)
         
         # フィルタ設定
         filter_rule = self.folder_pair.filter_rule
@@ -507,6 +516,7 @@ class SyncDialog(QDialog):
             'name': self.name_edit.text().strip(),
             'source_path': self.source_path_edit.text().strip(),
             'target_path': self.target_path_edit.text().strip(),
+            'category': self.category_combo.currentText().strip() or "未分類",
             'include_patterns': include_patterns,
             'exclude_patterns': exclude_patterns,
             'filter_enabled': self.filter_enabled_check.isChecked(),

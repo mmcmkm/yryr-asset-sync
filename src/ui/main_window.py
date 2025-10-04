@@ -11,7 +11,8 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
     QTabWidget, QPushButton, QLabel, QComboBox, QProgressBar,
     QTextEdit, QMenuBar, QMenu, QStatusBar, QMessageBox,
-    QFileDialog, QGroupBox, QCheckBox, QSpinBox, QFormLayout
+    QFileDialog, QGroupBox, QCheckBox, QSpinBox, QFormLayout,
+    QLineEdit
 )
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QSize, QDateTime, QObject, QUrl
 from PySide6.QtGui import QAction, QIcon, QFont, QDesktopServices
@@ -205,25 +206,52 @@ class MainWindow(QMainWindow):
         # フォルダペア一覧
         folder_group = QGroupBox("フォルダペア")
         folder_layout = QVBoxLayout(folder_group)
-        
+
         # フォルダペア操作ボタン
         folder_btn_layout = QHBoxLayout()
         self.add_folder_btn = QPushButton("追加")
         self.edit_folder_btn = QPushButton("編集")
         self.remove_folder_btn = QPushButton("削除")
         self.sync_folder_btn = QPushButton("選択同期")
-        
+
         folder_btn_layout.addWidget(self.add_folder_btn)
         folder_btn_layout.addWidget(self.edit_folder_btn)
         folder_btn_layout.addWidget(self.remove_folder_btn)
         folder_btn_layout.addStretch()
         folder_btn_layout.addWidget(self.sync_folder_btn)
-        
+
         folder_layout.addLayout(folder_btn_layout)
-        
+
+        # フォルダペア検索欄
+        search_layout = QHBoxLayout()
+        self.folder_search_edit = QLineEdit()
+        self.folder_search_edit.setPlaceholderText("検索... (スペースでAND検索)")
+        self.folder_search_edit.textChanged.connect(self.filter_folder_pairs)
+
+        self.search_clear_btn = QPushButton("クリア")
+        self.search_clear_btn.clicked.connect(lambda: self.folder_search_edit.clear())
+
+        search_layout.addWidget(self.folder_search_edit)
+        search_layout.addWidget(self.search_clear_btn)
+        folder_layout.addLayout(search_layout)
+
+        # カテゴリフィルタ
+        category_layout = QHBoxLayout()
+        self.category_filter_combo = QComboBox()
+        self.category_filter_combo.addItem("全カテゴリ")
+        self.category_filter_combo.currentTextChanged.connect(self.filter_folder_pairs)
+
+        self.manage_categories_btn = QPushButton("カテゴリ管理")
+        self.manage_categories_btn.clicked.connect(self.manage_categories)
+
+        category_layout.addWidget(QLabel("カテゴリ:"))
+        category_layout.addWidget(self.category_filter_combo)
+        category_layout.addWidget(self.manage_categories_btn)
+        folder_layout.addLayout(category_layout)
+
         # フォルダペアツリー（ドラッグ&ドロップ対応）
         self.folder_tree = DragDropTreeWidget()
-        self.folder_tree.setHeaderLabels(["名前", "ソース", "ターゲット", "状態"])
+        self.folder_tree.setHeaderLabels(["名前", "カテゴリ", "ソース", "ターゲット", "状態"])
         self.folder_tree.setSelectionMode(QTreeWidget.ExtendedSelection)  # 一般的な複数選択動作
         self.folder_tree.itemSelectionChanged.connect(self.on_folder_selection_changed)
         self.folder_tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -450,31 +478,99 @@ class MainWindow(QMainWindow):
     def refresh_folder_pairs(self):
         """フォルダペア一覧を更新"""
         self.folder_tree.clear()
-        
+
         if not self.project_manager.current_project:
             return
-        
+
         for folder_pair in self.project_manager.current_project.folder_pairs:
             item = QTreeWidgetItem(self.folder_tree)
             item.setText(0, folder_pair.name)
-            item.setText(1, folder_pair.source_path)
-            item.setText(2, folder_pair.target_path)
-            item.setText(3, "有効" if folder_pair.enabled else "無効")
+            item.setText(1, folder_pair.category)
+            item.setText(2, folder_pair.source_path)
+            item.setText(3, folder_pair.target_path)
+            item.setText(4, "有効" if folder_pair.enabled else "無効")
             item.setData(0, Qt.UserRole, folder_pair.id)
-        
+
         self.folder_tree.resizeColumnToContents(0)
-        self.folder_tree.resizeColumnToContents(3)
+        self.folder_tree.resizeColumnToContents(1)
+        self.folder_tree.resizeColumnToContents(4)
+
+        # フィルタリングを適用
+        self.filter_folder_pairs()
+
+    def filter_folder_pairs(self):
+        """フォルダペア一覧をフィルタリング"""
+        search_text = self.folder_search_edit.text().strip()
+        category_filter = self.category_filter_combo.currentText()
+
+        # 検索ワード分割 (スペース区切りでAND検索)
+        keywords = search_text.lower().split() if search_text else []
+
+        for i in range(self.folder_tree.topLevelItemCount()):
+            item = self.folder_tree.topLevelItem(i)
+            folder_pair_id = item.data(0, Qt.UserRole)
+            folder_pair = self.project_manager.get_folder_pair(folder_pair_id)
+
+            # テキスト検索
+            text_match = True
+            if keywords:
+                search_target = f"{item.text(0)} {item.text(1)} {item.text(2)} {item.text(3)}".lower()
+                text_match = all(kw in search_target for kw in keywords)
+
+            # カテゴリフィルタ
+            category_match = True
+            if category_filter != "全カテゴリ" and folder_pair:
+                category_match = (folder_pair.category == category_filter)
+
+            # 表示/非表示切り替え
+            item.setHidden(not (text_match and category_match))
     
     def refresh_ui(self):
         """UI全体を更新"""
         self.refresh_project_list()
+        self.update_category_filter()
         self.refresh_folder_pairs()
-        
+
         # ステータス更新
         if self.project_manager.current_project:
             self.project_status_label.setText(f"プロジェクト: {self.project_manager.current_project.name}")
         else:
             self.project_status_label.setText("プロジェクト: なし")
+
+    def update_category_filter(self):
+        """カテゴリフィルタコンボボックスを更新"""
+        current = self.category_filter_combo.currentText()
+        self.category_filter_combo.clear()
+        self.category_filter_combo.addItem("全カテゴリ")
+
+        if self.project_manager.current_project:
+            self.category_filter_combo.addItems(
+                self.project_manager.current_project.category_settings.categories
+            )
+
+        # 前回の選択を復元
+        index = self.category_filter_combo.findText(current)
+        if index >= 0:
+            self.category_filter_combo.setCurrentIndex(index)
+
+    def manage_categories(self):
+        """カテゴリ管理ダイアログを表示"""
+        if not self.project_manager.current_project:
+            QMessageBox.warning(self, "警告", "プロジェクトが選択されていません。")
+            return
+
+        from ui.category_dialog import CategoryDialog
+
+        dialog = CategoryDialog(
+            self.project_manager.current_project.category_settings.categories,
+            self
+        )
+
+        if dialog.exec() == CategoryDialog.Accepted:
+            self.project_manager.current_project.category_settings.categories = dialog.get_categories()
+            self.project_manager.save_current_project()
+            self.update_category_filter()
+            self.add_log_message("カテゴリを更新しました")
     
     def get_sync_options(self) -> SyncOptions:
         """UI設定から同期オプションを取得"""
@@ -627,8 +723,14 @@ class MainWindow(QMainWindow):
         if not self.project_manager.current_project:
             QMessageBox.warning(self, "警告", "プロジェクトが選択されていません。")
             return
-        
+
         dialog = SyncDialog(self)
+
+        # カテゴリリストを設定
+        dialog.category_combo.addItems(
+            self.project_manager.current_project.category_settings.categories
+        )
+
         if dialog.exec() == SyncDialog.Accepted:
             folder_data = dialog.get_folder_data()
             folder_pair = self.project_manager.add_folder_pair(
@@ -638,18 +740,21 @@ class MainWindow(QMainWindow):
                 folder_data['include_patterns'],
                 folder_data['exclude_patterns']
             )
-            
+
+            # カテゴリを設定
+            if folder_pair and 'category' in folder_data:
+                folder_pair.category = folder_data['category']
+
             # マッピングルールを設定
             if folder_pair and 'mapping_rules' in folder_data and folder_data['mapping_rules']:
                 folder_pair.file_mapping_rules = folder_data['mapping_rules']
-                self.project_manager.save_current_project()
-            
+
             # リネームルールを設定
             if folder_pair and 'rename_rules' in folder_data and folder_data['rename_rules']:
                 folder_pair.file_rename_rules = folder_data['rename_rules']
-                self.project_manager.save_current_project()
-            
+
             if folder_pair:
+                self.project_manager.save_current_project()
                 self.refresh_folder_pairs()
                 self.add_log_message(f"フォルダペアを追加しました: {folder_pair.name}")
     
@@ -658,12 +763,18 @@ class MainWindow(QMainWindow):
         selected_items = self.folder_tree.selectedItems()
         if not selected_items:
             return
-        
+
         folder_pair_id = selected_items[0].data(0, Qt.UserRole)
         folder_pair = self.project_manager.get_folder_pair(folder_pair_id)
-        
+
         if folder_pair:
             dialog = SyncDialog(self, folder_pair)
+
+            # カテゴリリストを設定
+            dialog.category_combo.addItems(
+                self.project_manager.current_project.category_settings.categories
+            )
+
             if dialog.exec() == SyncDialog.Accepted:
                 folder_data = dialog.get_folder_data()
                 
@@ -677,20 +788,24 @@ class MainWindow(QMainWindow):
                     folder_pair.enabled = folder_data['enabled']
                     folder_pair.auto_sync = folder_data['auto_sync']
                     folder_pair.backup_enabled = folder_data['backup_enabled']
-                    
+
+                    # カテゴリの更新
+                    if 'category' in folder_data:
+                        folder_pair.category = folder_data['category']
+
                     # フィルター設定の更新
                     folder_pair.filter_rule.enabled = folder_data['filter_enabled']
                     folder_pair.filter_rule.include_patterns = folder_data['include_patterns']
                     folder_pair.filter_rule.exclude_patterns = folder_data['exclude_patterns']
-                    
+
                     # マッピングルールの更新
                     if 'mapping_rules' in folder_data:
                         folder_pair.file_mapping_rules = folder_data['mapping_rules']
-                    
+
                     # リネームルールの更新
                     if 'rename_rules' in folder_data:
                         folder_pair.file_rename_rules = folder_data['rename_rules']
-                    
+
                     # 設定を保存
                     self.project_manager.save_current_project()
                     self.refresh_folder_pairs()
@@ -1064,7 +1179,13 @@ class MainWindow(QMainWindow):
     def create_folder_pair_from_drop(self, source_path: str, target_path: str = None):
         """ドロップされたフォルダからフォルダペアを作成"""
         dialog = SyncDialog(self)
-        
+
+        # カテゴリリストを設定
+        if self.project_manager.current_project:
+            dialog.category_combo.addItems(
+                self.project_manager.current_project.category_settings.categories
+            )
+
         # ドロップされたパスを設定
         dialog.source_path_edit.setText(source_path)
         if target_path:
@@ -1090,17 +1211,20 @@ class MainWindow(QMainWindow):
                 folder_data['exclude_patterns']
             )
             
+            # カテゴリを設定
+            if folder_pair and 'category' in folder_data:
+                folder_pair.category = folder_data['category']
+
             # マッピングルールを設定
             if folder_pair and 'mapping_rules' in folder_data and folder_data['mapping_rules']:
                 folder_pair.file_mapping_rules = folder_data['mapping_rules']
-                self.project_manager.save_current_project()
-            
+
             # リネームルールを設定
             if folder_pair and 'rename_rules' in folder_data and folder_data['rename_rules']:
                 folder_pair.file_rename_rules = folder_data['rename_rules']
-                self.project_manager.save_current_project()
-            
+
             if folder_pair:
+                self.project_manager.save_current_project()
                 self.refresh_folder_pairs()
                 self.add_log_message(f"ドロップからフォルダペアを作成: {folder_pair.name}")
     

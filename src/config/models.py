@@ -50,6 +50,13 @@ class FolderPair:
     backup_enabled: bool = True  # バックアップ有効
     last_sync: Optional[str] = None  # 最後の同期日時
     enabled: bool = True
+    category: str = "未分類"  # カテゴリ
+
+
+@dataclass
+class CategorySettings:
+    """カテゴリ設定"""
+    categories: List[str] = field(default_factory=lambda: ["未分類", "UI", "背景", "キャラクター", "エフェクト"])
 
 
 @dataclass
@@ -60,6 +67,7 @@ class ProjectSettings:
     description: str = ""  # 説明
     folder_pairs: List[FolderPair] = field(default_factory=list)
     global_filter: FilterRule = field(default_factory=FilterRule)
+    category_settings: 'CategorySettings' = field(default_factory=CategorySettings)  # カテゴリ設定
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
